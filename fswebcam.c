@@ -1589,7 +1589,214 @@ int fswc_free_config(fswebcam_config_t *config)
 	return(0);
 }
 
-int main(int argc, char *argv[])
+/*
+ Code to grab a frame only, no transforms or banners which saves on needless image allocations
+*/
+gdImage* fswc_grab_frame_noopts(fswebcam_config_t *config)
+{
+	uint32_t frame;
+	uint32_t x, y;
+	avgbmp_t *abitmap, *pbitmap;
+	gdImage *image, *original;
+	uint8_t modified;
+	src_t src;
+	
+	/* Record the start time. */
+	config->start = time(NULL);
+	
+	/* Set source options... */
+	memset(&src, 0, sizeof(src));
+	src.input      = config->input;
+	src.tuner      = config->tuner;
+	src.frequency  = config->frequency;
+	src.delay      = config->delay;
+	src.timeout    = 10; /* seconds */
+	src.use_read   = config->use_read;
+	src.list       = config->list;
+	src.palette    = config->palette;
+	src.width      = config->width;
+	src.height     = config->height;
+	src.fps        = config->fps;
+	src.option     = config->option;
+	
+	HEAD("--- Opening %s...", config->device);
+	
+	if(src_open(&src, config->device) == -1) return(NULL);
+	
+	/* The source may have adjusted the width and height we passed
+	 * to it. Update the main config to match. */
+	config->width  = src.width;
+	config->height = src.height;
+	
+	/* Allocate memory for the average bitmap buffer. */
+	abitmap = calloc(config->width * config->height * 3, sizeof(avgbmp_t));
+	if(!abitmap)
+	{
+		ERROR("Out of memory.");
+		return(NULL);
+	}
+	
+	if(config->frames == 1) HEAD("--- Capturing frame...");
+	else HEAD("--- Capturing %i frames...", config->frames);
+	
+	if(config->skipframes == 1) MSG("Skipping frame...");
+	else if(config->skipframes > 1) MSG("Skipping %i frames...", config->skipframes);
+	
+	/* Grab (and do nothing with) the skipped frames. */
+	for(frame = 0; frame < config->skipframes; frame++)
+		if(src_grab(&src) == -1) break;
+	
+	/* If frames where skipped, inform when normal capture begins. */
+	if(config->skipframes) MSG("Capturing %i frames...", config->frames);
+	
+	/* Grab the requested number of frames. */
+	for(frame = 0; frame < config->frames; frame++)
+	{
+		if(src_grab(&src) == -1) break;
+		
+		if(!frame && config->dumpframe)
+		{
+			/* Dump the raw data from the first frame to file. */
+			FILE *f;
+			
+			MSG("Dumping raw frame to '%s'...", config->dumpframe);
+			
+			f = fopen(config->dumpframe, "wb");
+			if(!f) ERROR("fopen: %s", strerror(errno));
+			else
+			{
+				fwrite(src.img, 1, src.length, f);
+				fclose(f);
+			}
+		}
+		
+		/* Add frame to the average bitmap. */
+		switch(src.palette)
+		{
+		case SRC_PAL_PNG:
+			fswc_add_image_png(&src, abitmap);
+			break;
+		case SRC_PAL_JPEG:
+		case SRC_PAL_MJPEG:
+			fswc_add_image_jpeg(&src, abitmap);
+			break;
+		case SRC_PAL_S561:
+			fswc_add_image_s561(abitmap, src.img, src.length, src.width, src.height, src.palette);
+			break;
+		case SRC_PAL_RGB32:
+			fswc_add_image_rgb32(&src, abitmap);
+			break;
+		case SRC_PAL_BGR32:
+			fswc_add_image_bgr32(&src, abitmap);
+			break;
+		case SRC_PAL_RGB24:
+			fswc_add_image_rgb24(&src, abitmap);
+			break;
+		case SRC_PAL_BGR24:
+			fswc_add_image_bgr24(&src, abitmap);
+			break;
+		case SRC_PAL_BAYER:
+		case SRC_PAL_SGBRG8:
+		case SRC_PAL_SGRBG8:
+			fswc_add_image_bayer(abitmap, src.img, src.length, src.width, src.height, src.palette);
+			break;
+		case SRC_PAL_YUYV:
+		case SRC_PAL_UYVY:
+			fswc_add_image_yuyv(&src, abitmap);
+			break;
+		case SRC_PAL_YUV420P:
+			fswc_add_image_yuv420p(&src, abitmap);
+			break;
+		case SRC_PAL_NV12MB:
+			fswc_add_image_nv12mb(&src, abitmap);
+			break;
+		case SRC_PAL_RGB565:
+			fswc_add_image_rgb565(&src, abitmap);
+			break;
+		case SRC_PAL_RGB555:
+			fswc_add_image_rgb555(&src, abitmap);
+			break;
+		case SRC_PAL_Y16:
+			fswc_add_image_y16(&src, abitmap);
+			break;
+		case SRC_PAL_GREY:
+			fswc_add_image_grey(&src, abitmap);
+			break;
+		}
+	}
+	
+	/* We are now finished with the capture card. */
+	src_close(&src);
+	
+	/* Fail if no frames where captured. */
+	if(!frame)
+	{
+		ERROR("No frames captured.");
+		free(abitmap);
+		return(NULL);
+	}
+	
+	HEAD("--- Processing captured image...");
+	
+	/* Copy the average bitmap image to a gdImage. */
+	original = gdImageCreateTrueColor(config->width, config->height);
+	if(!original)
+	{
+		ERROR("Out of memory.");
+		free(abitmap);
+		return(NULL);
+	}
+	
+	pbitmap = abitmap;
+	for(y = 0; y < config->height; y++)
+		for(x = 0; x < config->width; x++)
+		{
+			int px = x;
+			int py = y;
+			int colour;
+			
+			colour  = (*(pbitmap++) / config->frames) << 16;
+			colour += (*(pbitmap++) / config->frames) << 8;
+			colour += (*(pbitmap++) / config->frames);
+			
+			gdImageSetPixel(original, px, py, colour);
+		}
+	
+	free(abitmap);
+	return original;
+}
+
+gdImage* getCapture(int argc, char *argv[])
+{
+	fswebcam_config_t *config;
+	
+	/* Set the locale to the system default */
+	setlocale(LC_ALL, "");
+	
+	/* Prepare the configuration structure. */
+	config = calloc(sizeof(fswebcam_config_t), 1);
+	if(!config)
+	{
+		WARN("Out of memory.");
+		return(NULL);
+	}
+	
+	/* Set defaults and parse the command line. */
+	if(fswc_getopts(config, argc, argv)) return(NULL);
+		
+	/* Capture the image(s). */
+	gdImage * img = fswc_grab_frame_noopts(config);
+	
+	fswc_free_config(config);
+	free(config);	
+	return img;
+}
+
+/*
+ A rename of 'main' is required as it conflicts with Go program's main.
+*/
+//int main(int argc, char *argv[])
+int OLDmain(int argc, char *argv[])
 {
 	fswebcam_config_t *config;
 	
