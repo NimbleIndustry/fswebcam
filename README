@@ -1,7 +1,22 @@
 
 This is a Golang wrapping of the fswebcam application. Suitable for use in a go-based application that needs webcam functionality on *nix.
 
+For an example use, see the unit test.
+
+To include in a project:
+
+```
+$ export GOPATH=`pwd`
+$ go get -d github.com/NimbleIndustry/fswebcam
+$ cd src/github.com/NimbleIndustry/fswebcam
+$ ./configure
+```
+
+Then in your application, simply import the fswebcam project. Again, see the unit test for an example usage.
+
 Original README follows....
+
+==========
 
 fswebcam - Small and simple webcam software for *nix.
 
