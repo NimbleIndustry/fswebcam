@@ -1,4 +1,8 @@
 
+This is a Golang wrapping of the fswebcam application. Suitable for use in a go-based application that needs webcam functionality on *nix.
+
+Original README follows....
+
 fswebcam - Small and simple webcam software for *nix.
 
 Created by Philip Heron <phil@sanslogic.co.uk>
