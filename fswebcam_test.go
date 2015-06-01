@@ -9,7 +9,10 @@ import (
 func TestFrameGrab(t *testing.T) {
 
 	args := strings.Split("-d v4l2:/dev/video1 -S 2 -p MJPEG -q -r 960x720 -F 2 -fps 30", " ")
-	bytes := GetCaptureJPEGBytes(args, 100)
+	bytes, err := GetCaptureJPEGBytes(args, 100)
+	if err != nil {
+		t.Error(err)
+	}
 	if len(bytes) < 1000 {
 		t.Errorf("Len of captured bytes should be greater %d\n", len(bytes))
 	}

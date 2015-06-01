@@ -31,10 +31,11 @@ extern gdImage* getCapture(int argc, char *argv[]);
 */
 import "C"
 import (
+	"fmt"
 	"unsafe"
 )
 
-func GetCaptureJPEGBytes(args []string, quality int) []byte {
+func GetCaptureJPEGBytes(args []string, quality int) ([]byte, error) {
 	argc := C.int(len(args))
 	argv := make([]*C.char, argc)
 	for i, arg := range args {
@@ -42,13 +43,16 @@ func GetCaptureJPEGBytes(args []string, quality int) []byte {
 	}
 
 	img := C.getCapture(argc, &argv[0])
+	if img == nil {
+		return nil, fmt.Errorf("Error capturing frame with %v", args)
+	}
 	bytes := ImageToJPEGBuffer(img, quality)
 
 	C.gdImageDestroy(img)
 	for _, arg := range argv {
 		C.free(unsafe.Pointer(arg))
 	}
-	return bytes
+	return bytes, nil
 }
 
 func ImageToJPEGBuffer(p *C.gdImage, quality int) []byte {
